@@ -10,8 +10,8 @@ on:
       - main
 
 env:
-  DOCKER_REGISTRY_SERVER_URL: jfernandezcr.azurecr.io
-  IMAGE_NAME: jfernandez-dockerimg
+  REGISTRY_LOGIN_SERVER: jfernandezcr.azurecr.io
+  IMAGE_BASE_NAME: jfernandez-dockerimg
   APP_SERVICE_NAME: jfernandez-appservice
   RESOURCE_GROUP_DEV: BCSAI2024-DEVOPS-STUDENTS-B-DEV
   SUBSCRIPTION_ID_DEV: e0b9cada-61bc-4b5a-bd7a-52c606726b3b
@@ -23,11 +23,11 @@ jobs:
     steps:
       # Checkout code
       - uses: actions/checkout@v3
-      
+
       # Lint Bicep code
       - name: Run Bicep linter
         run: az bicep build --file ./main.bicep
-      
+
       # Upload Bicep build artifact
       - name: Upload Bicep build artifact
         uses: actions/upload-artifact@v3
@@ -47,7 +47,7 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: bicep-build
-      
+
       # Log into Azure
       - uses: azure/login@v2
         with:
@@ -80,24 +80,16 @@ jobs:
       # Set image version
       - name: Set image version
         id: image-version
-        run: |
-          echo "version=$(date +'%Y.%m.%d.%H.%M')" >> $GITHUB_ENV
-
-      # Print Docker images
-      - name: Print images
-        run: |
-          echo "Images"
-          docker images
+        run: echo "::set-output name=version::$(echo ${GITHUB_REF#refs/heads/})-$(date +'%Y.%m.%d.%H.%M')"
 
       # Build and push Docker image
-      - name: Docker build and push image
-        env:
-          DOCKER_REGISTRY_SERVER_URL: ${{ env.DOCKER_REGISTRY_SERVER_URL }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+      - name: Build and push image
+        working-directory: ./app
         run: |
-          docker build -t ${{ env.DOCKER_REGISTRY_SERVER_URL }}/${{ env.IMAGE_NAME }}:${{ env.version }} .
-          echo ${{ secrets.REGISTRY_PASSWORD }} | docker login ${{ env.DOCKER_REGISTRY_SERVER_URL }} -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
-          docker push ${{ env.DOCKER_REGISTRY_SERVER_URL }}/${{ env.IMAGE_NAME }}:${{ env.version }}
+          docker build . -t ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_BASE_NAME }}:${{ steps.image-version.outputs.version }}
+          docker build . -t ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_BASE_NAME }}:${{ github.ref_name }}-latest
+          docker push ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_BASE_NAME }}:${{ steps.image-version.outputs.version }}
+          docker push ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_BASE_NAME }}:${{ github.ref_name }}-latest
 
   deploy-container:
     runs-on: ubuntu-latest
@@ -105,7 +97,7 @@ jobs:
     steps:
       # Log into Azure
       - name: Login to Azure
-        uses: azure/login@v1
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -115,4 +107,4 @@ jobs:
         with:
           app-name: ${{ env.APP_SERVICE_NAME }}
           images: |
-            ${{ env.DOCKER_REGISTRY_SERVER_URL }}/${{ env.IMAGE_NAME }}:${{ needs.build-push-image.outputs.image-version }}
+            ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_BASE_NAME }}:${{ needs.build-push-image.outputs.image-version }}
